@@ -1,0 +1,35 @@
+[
+  {
+    "username": "admin",
+    "password_hash": "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9",
+    "rol": "admin",
+    "correo": "admin@ai360.com",
+    "telefono": null,
+    "empresa": "AI360",
+    "puesto": "Administrador",
+    "suscripcion": "enterprise",
+    "accesos": [
+      "guru",
+      "tablero_movilidad",
+      "score_vivienda",
+      "precios_vivienda"
+    ],
+    "fecha_creacion": "2026-04-13 10:40:28",
+    "ultimo_login": "2026-04-13 10:48:32",
+    "fecha_modificacion": null
+  },
+  {
+    "username": "string",
+    "password_hash": "string",
+    "rol": "user",
+    "correo": "string",
+    "telefono": "string",
+    "empresa": "string",
+    "puesto": "string",
+    "suscripcion": "basic",
+    "accesos": [],
+    "fecha_creacion": "2026-04-13 10:48:55",
+    "ultimo_login": "string",
+    "fecha_modificacion": "string"
+  }
+]
