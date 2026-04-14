@@ -1,0 +1,103 @@
+# ============================================================
+# ☁️  CLOUD BUILD CONFIGURATION - GOOGLE CLOUD RUN
+# ============================================================
+# Este archivo automatiza el proceso de:
+# 1. Compilar la imagen Docker
+# 2. Subirla a Artifact Registry
+# 3. Desplegarla en Cloud Run
+
+steps:
+  # ============================================================
+  # PASO 1: COMPILAR IMAGEN DOCKER (Build)
+  # ============================================================
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build-image'
+    args:
+      - 'build'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY}/${_IMAGE_NAME}:${SHORT_SHA}'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY}/${_IMAGE_NAME}:latest'
+      - '-f'
+      - 'Dockerfile'
+      - '.'
+    env:
+      - 'DOCKER_BUILDKIT=1'
+      - 'BUILDKIT_INLINE_CACHE=1'
+
+  # ============================================================
+  # PASO 2: SUBIR IMAGEN A ARTIFACT REGISTRY (Push)
+  # ============================================================
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-image'
+    args:
+      - 'push'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY}/${_IMAGE_NAME}:${SHORT_SHA}'
+    waitFor: ['build-image']
+
+  # ============================================================
+  # PASO 3: DESPLEGAR EN CLOUD RUN (Deploy)
+  # ============================================================
+  - name: 'gcr.io/cloud-builders/gke-deploy'
+    id: 'deploy-cloud-run'
+    args:
+      - 'run'
+      - '--filename=.'
+      - '--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY}/${_IMAGE_NAME}:${SHORT_SHA}'
+      - '--location=${_REGION}'
+      - '--namespace=default'
+    waitFor: ['push-image']
+
+  # ============================================================
+  # ALTERNATIVA: DEPLOY DIRECTO (SIN GKE-DEPLOY)
+  # Descomenta esto y comenta el paso anterior si prefieres
+  # ============================================================
+  # - name: 'gcr.io/cloud-builders/run'
+  #   args:
+  #     - 'deploy'
+  #     - '${_SERVICE_NAME}'
+  #     - '--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY}/${_IMAGE_NAME}:${SHORT_SHA}'
+  #     - '--region=${_REGION}'
+  #     - '--platform=managed'
+  #     - '--allow-unauthenticated'
+  #     - '--port=8000'
+  #     - '--memory=512Mi'
+  #     - '--cpu=1'
+  #     - '--timeout=3600'
+  #   waitFor: ['push-image']
+
+# ============================================================
+# CONFIGURACIÓN DE LA IMAGEN
+# ============================================================
+images:
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY}/${_IMAGE_NAME}:${SHORT_SHA}'
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REGISTRY}/${_IMAGE_NAME}:latest'
+
+# ============================================================
+# VARIABLES DE SUSTITUCIÓN (Substitutions)
+# Personaliza estos valores para tu proyecto
+# ============================================================
+substitutions:
+  _REGION: 'us-central1'              # Región: us-central1, europe-west1, etc.
+  _ARTIFACT_REGISTRY: 'ai360'         # Nombre del repositorio en Artifact Registry
+  _IMAGE_NAME: 'ai360-backend'        # Nombre de la imagen Docker
+  _SERVICE_NAME: 'ai360-backend'      # Nombre del servicio en Cloud Run
+  _PROJECT_ID: ${PROJECT_ID}          # Se obtiene automáticamente
+
+# ============================================================
+# OPCIONES DE TOLERANCIA Y TIMEOUT
+# ============================================================
+options:
+  machineType: 'N1_HIGHCPU_8'
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 1800s
+
+# ============================================================
+# ETIQUETAS (Labels) - Opcional
+# ============================================================
+tags:
+  - 'fastapi'
+  - 'cloud-run'
+  - 'ai360'
+  - 'gcp'
