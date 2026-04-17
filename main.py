@@ -10,7 +10,15 @@ from models.usuario import Usuario
 from services.usuario_service import UsuarioService
 
 app = FastAPI(title="AI360 Backend", description="Backend para plataforma AI360")
+from fastapi.middleware.cors import CORSMiddleware
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 usuario_service = UsuarioService()
 
 # Función para encriptar contraseñas (Hash SHA256)
