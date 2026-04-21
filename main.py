@@ -1,6 +1,7 @@
 import os
 import uvicorn
 import hashlib
+import time  # Para simular el proceso de captura
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
@@ -21,6 +22,8 @@ app.add_middleware(
 )
 usuario_service = UsuarioService()
 
+# --- MODELOS DE DATOS ---
+
 # Función para encriptar contraseñas (Hash SHA256)
 def generar_hash_sha256(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
@@ -38,6 +41,12 @@ class ModificarUsuarioRequest(BaseModel):
     username: str
     updates: dict
 
+# NUEVO: Modelo para la solicitud de captura
+class CaptureRequest(BaseModel):
+    username: str
+    dashboard_type: str
+    dashboard_url: str
+
 # --- ENDPOINTS ---
 
 @app.post("/login", tags=["Usuarios"])
@@ -50,14 +59,31 @@ def login(request: LoginRequest):
 @app.post("/alta_usuario", tags=["Usuarios"])
 def alta_usuario(request: AltaUsuarioRequest):
     try:
-        # Hasheamos la contraseña antes de mandarla al servicio
         password_plana = request.nuevo_usuario.password_hash
         request.nuevo_usuario.password_hash = generar_hash_sha256(password_plana)
-        
         usuario_service.alta_usuario(request.nuevo_usuario)
         return {"message": "Usuario creado exitosamente"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+# NUEVO: Endpoint para generar capturas y subir al bucket
+@app.post("/generar_captura", tags=["Capturas"])
+def generar_captura(request: CaptureRequest):
+    try:
+        # Aquí es donde Daniel implementará Puppeteer/Playwright
+        # Por ahora devolvemos un éxito simulado para que tu botón funcione
+        time.sleep(1) # Simula el tiempo de screenshot
+        
+        nombre_archivo = f"cap_{request.username}_{int(time.time())}.png"
+        bucket_url = f"https://storage.googleapis.com/tu-bucket-ai360/capturas/{nombre_archivo}"
+        
+        return {
+            "status": "success",
+            "message": "Captura almacenada en el bucket",
+            "url": bucket_url
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al procesar captura: {str(e)}")
 
 @app.get("/servicios/{username}", tags=["Servicios"])
 def obtener_servicios(username: str):
@@ -97,6 +123,5 @@ def listar_usuarios(admin_user: str, admin_password: str):
 
 # --- CONFIGURACIÓN PARA GOOGLE CLOUD RUN ---
 if __name__ == "__main__":
-    # Importante: Cloud Run inyecta el puerto en la variable de entorno PORT
     port = int(os.environ.get("PORT", 8080))
     uvicorn.run(app, host="0.0.0.0", port=port)
