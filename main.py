@@ -1,17 +1,18 @@
 import os
 import uvicorn
 import hashlib
-import time  # Para simular el proceso de captura
-from fastapi import FastAPI, HTTPException
+import time
+from fastapi import FastAPI, HTTPException, Response  # Añadimos Response
 from pydantic import BaseModel
 from typing import List, Optional
+from fastapi.middleware.cors import CORSMiddleware
+from google.cloud import storage  # Conexión real a Google Cloud
 
 # Importaciones de tus archivos locales
 from models.usuario import Usuario
 from services.usuario_service import UsuarioService
 
 app = FastAPI(title="AI360 Backend", description="Backend para plataforma AI360")
-from fastapi.middleware.cors import CORSMiddleware
 
 app.add_middleware(
     CORSMiddleware,
@@ -20,11 +21,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 usuario_service = UsuarioService()
+# NOMBRE DE TU BUCKET CONFIRMADO
+BUCKET_NAME = "usuarios_plataforma_ai360"
 
 # --- MODELOS DE DATOS ---
 
-# Función para encriptar contraseñas (Hash SHA256)
 def generar_hash_sha256(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
@@ -41,7 +44,6 @@ class ModificarUsuarioRequest(BaseModel):
     username: str
     updates: dict
 
-# NUEVO: Modelo para la solicitud de captura
 class CaptureRequest(BaseModel):
     username: str
     dashboard_type: str
@@ -66,24 +68,36 @@ def alta_usuario(request: AltaUsuarioRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-# NUEVO: Endpoint para generar capturas y subir al bucket
+# ENDPOINT MODIFICADO PARA DESCARGA REAL Y SUBIDA AL BUCKET
 @app.post("/generar_captura", tags=["Capturas"])
 def generar_captura(request: CaptureRequest):
     try:
-        # Aquí es donde Daniel implementará Puppeteer/Playwright
-        # Por ahora devolvemos un éxito simulado para que tu botón funcione
-        time.sleep(1) # Simula el tiempo de screenshot
-        
+        # 1. Simulación de captura (Aquí Daniel integrará Puppeteer)
+        time.sleep(1)
         nombre_archivo = f"cap_{request.username}_{int(time.time())}.png"
-        bucket_url = f"https://storage.googleapis.com/tu-bucket-ai360/capturas/{nombre_archivo}"
+        contenido_binario = b"Contenido de captura AI360 para " + request.username.encode()
+
+        # 2. SUBIDA REAL AL BUCKET usuarios_plataforma_ai360
+        client = storage.Client()
+        bucket = client.bucket(BUCKET_NAME)
+        blob = bucket.blob(f"capturas/{nombre_archivo}")
         
-        return {
-            "status": "success",
-            "message": "Captura almacenada en el bucket",
-            "url": bucket_url
-        }
+        blob.upload_from_string(
+            contenido_binario,
+            content_type='image/png'
+        )
+
+        # 3. RESPUESTA PARA DESCARGA AUTOMÁTICA EN PC DEL CLIENTE
+        return Response(
+            content=contenido_binario,
+            media_type="image/png",
+            headers={
+                "Content-Disposition": f"attachment; filename={nombre_archivo}",
+                "Access-Control-Expose-Headers": "Content-Disposition"
+            }
+        )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al procesar captura: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error en bucket o captura: {str(e)}")
 
 @app.get("/servicios/{username}", tags=["Servicios"])
 def obtener_servicios(username: str):
@@ -121,7 +135,6 @@ def listar_usuarios(admin_user: str, admin_password: str):
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
 
-# --- CONFIGURACIÓN PARA GOOGLE CLOUD RUN ---
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     uvicorn.run(app, host="0.0.0.0", port=port)
