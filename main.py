@@ -9,7 +9,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from google.cloud import storage
 
 # Importaciones de tus archivos locales
-# Asegúrate de que estos archivos existan en tu estructura de carpetas
 from models.usuario import Usuario
 from services.usuario_service import UsuarioService
 
@@ -77,9 +76,12 @@ def generar_captura(request: CaptureRequest):
         time.sleep(1) # Simulación de tiempo de captura
         nombre_archivo = f"cap_{request.username}_{int(time.time())}.png"
         
-        # IMPORTANTE: Esto es texto plano. Para que no de "formato no compatible", 
-        # Daniel debe inyectar aquí el binario real de la imagen (.png).
-        contenido_binario = b"Resumen AI360 - Usuario: " + request.username.encode()
+        # MODIFICACIÓN: Binario real de un PNG (un punto rojo) para asegurar compatibilidad de formato
+        contenido_binario = (
+            b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01'
+            b'\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\xff\xff'
+            b'\x3f\x00\x05\xfe\x02\xfe\x0dc\x44\xaf\x00\x00\x00\x00IEND\xaeB`\x82'
+        )
 
         # 2. Intento de subida al Bucket
         try:
@@ -92,7 +94,6 @@ def generar_captura(request: CaptureRequest):
                 content_type='image/png'
             )
         except Exception as bucket_err:
-            # Si falla el bucket, lanzamos error antes de intentar descargar nada
             print(f"Error de Bucket: {str(bucket_err)}")
             raise Exception(f"No se pudo guardar en Storage: {str(bucket_err)}")
 
@@ -106,7 +107,6 @@ def generar_captura(request: CaptureRequest):
         )
 
     except Exception as e:
-        # Si algo falla, enviamos el error como texto para que no descargues un archivo "roto"
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/servicios/{username}", tags=["Servicios"])
@@ -122,7 +122,6 @@ def listar_usuarios(admin_user: str, admin_password: str):
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
 
-# El bloque main debe ir al final y bien indentado
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     uvicorn.run(app, host="0.0.0.0", port=port)
