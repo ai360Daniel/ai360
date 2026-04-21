@@ -14,7 +14,7 @@ from services.usuario_service import UsuarioService
 
 app = FastAPI(title="AI360 Backend", description="Backend para plataforma AI360")
 
-# CONFIGURACIÓN DE CORS
+# CONFIGURACIÓN DE CORS REFORZADA
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -42,20 +42,35 @@ class AltaUsuarioRequest(BaseModel):
 class ModificarUsuarioRequest(BaseModel):
     admin_user: str
     admin_password: str
-    username: str  # El usuario a modificar
-    updates: dict  # Ejemplo: {"role": "admin"}
+    username: str  # Usuario objetivo
+    updates: dict
 
 class BajaUsuarioRequest(BaseModel):
     admin_user: str
     admin_password: str
-    target_user: str
+    target_user: str # Nombre sincronizado con el Frontend
 
 class CaptureRequest(BaseModel):
     username: str
     dashboard_type: str
     dashboard_url: str
 
-# --- ENDPOINTS DE GESTIÓN (CORREGIDOS) ---
+# --- ENDPOINTS ---
+
+@app.post("/login", tags=["Usuarios"])
+def login(request: LoginRequest):
+    valido, rol = usuario_service.verificar_usuario(request.username, request.password)
+    if not valido:
+        raise HTTPException(status_code=401, detail="Credenciales inválidas")
+    return {"message": "Login exitoso", "rol": rol}
+
+@app.get("/listar_usuarios", tags=["Admin"])
+def listar_usuarios(admin_user: str, admin_password: str):
+    try:
+        usuarios = usuario_service.listar_usuarios(admin_user, admin_password)
+        return {"usuarios": usuarios}
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
 
 @app.post("/modificar_usuario", tags=["Admin"])
 def modificar_usuario(request: ModificarUsuarioRequest):
@@ -68,9 +83,7 @@ def modificar_usuario(request: ModificarUsuarioRequest):
         )
         if exito:
             return {"message": "Usuario actualizado correctamente"}
-        raise HTTPException(status_code=400, detail="No se pudo realizar la actualización")
-    except PermissionError as e:
-        raise HTTPException(status_code=403, detail=str(e))
+        raise HTTPException(status_code=400, detail="Error en la actualización")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -84,35 +97,19 @@ def baja_usuario(request: BajaUsuarioRequest):
         )
         if exito:
             return {"message": f"Usuario {request.target_user} eliminado"}
-        raise HTTPException(status_code=400, detail="Error al eliminar usuario")
-    except PermissionError as e:
-        raise HTTPException(status_code=403, detail=str(e))
+        raise HTTPException(status_code=400, detail="No se pudo eliminar el usuario")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/listar_usuarios", tags=["Admin"])
-def listar_usuarios(admin_user: str, admin_password: str):
-    try:
-        usuarios = usuario_service.listar_usuarios(admin_user, admin_password)
-        return {"usuarios": usuarios}
-    except PermissionError as e:
-        raise HTTPException(status_code=403, detail=str(e))
-
-# --- OTROS ENDPOINTS ---
-
-@app.post("/login", tags=["Usuarios"])
-def login(request: LoginRequest):
-    valido, rol = usuario_service.verificar_usuario(request.username, request.password)
-    if not valido:
-        raise HTTPException(status_code=401, detail="Credenciales inválidas")
-    return {"message": "Login exitoso", "rol": rol}
 
 @app.post("/generar_captura", tags=["Capturas"])
 def generar_captura(request: CaptureRequest):
     try:
         nombre_archivo = f"cap_{request.username}_{int(time.time())}.png"
-        contenido_binario = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\xff\xff\x3f\x00\x05\xfe\x02\xfe\x0dc\x44\xaf\x00\x00\x00\x00IEND\xaeB`\x82'
-        
+        contenido_binario = (
+            b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01'
+            b'\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\xff\xff'
+            b'\x3f\x00\x05\xfe\x02\xfe\x0dc\x44\xaf\x00\x00\x00\x00IEND\xaeB`\x82'
+        )
         client = storage.Client()
         bucket = client.get_bucket(BUCKET_NAME)
         blob = bucket.blob(f"capturas/{nombre_archivo}")
