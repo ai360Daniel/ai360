@@ -2,28 +2,30 @@ import os
 import uvicorn
 import hashlib
 import time
-from fastapi import FastAPI, HTTPException, Response  # Añadimos Response
+from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel
 from typing import List, Optional
 from fastapi.middleware.cors import CORSMiddleware
-from google.cloud import storage  # Conexión real a Google Cloud
+from google.cloud import storage
 
 # Importaciones de tus archivos locales
+# Asegúrate de que estos archivos existan en tu estructura de carpetas
 from models.usuario import Usuario
 from services.usuario_service import UsuarioService
 
 app = FastAPI(title="AI360 Backend", description="Backend para plataforma AI360")
 
+# CONFIGURACIÓN DE CORS REFORZADA
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition"] # Vital para que el navegador vea el nombre del archivo
 )
 
 usuario_service = UsuarioService()
-# NOMBRE DE TU BUCKET CONFIRMADO
 BUCKET_NAME = "usuarios_plataforma_ai360"
 
 # --- MODELOS DE DATOS ---
@@ -68,64 +70,49 @@ def alta_usuario(request: AltaUsuarioRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-# ENDPOINT MODIFICADO PARA DESCARGA REAL Y SUBIDA AL BUCKET
 @app.post("/generar_captura", tags=["Capturas"])
 def generar_captura(request: CaptureRequest):
     try:
-        # 1. Simulación de captura (Aquí Daniel integrará Puppeteer)
-        time.sleep(1)
+        # 1. Preparación de datos
+        time.sleep(1) # Simulación de tiempo de captura
         nombre_archivo = f"cap_{request.username}_{int(time.time())}.png"
-        contenido_binario = b"Contenido de captura AI360 para " + request.username.encode()
-
-        # 2. SUBIDA REAL AL BUCKET usuarios_plataforma_ai360
-        client = storage.Client()
-        bucket = client.bucket(BUCKET_NAME)
-        blob = bucket.blob(f"capturas/{nombre_archivo}")
         
-        blob.upload_from_string(
-            contenido_binario,
-            content_type='image/png'
-        )
+        # IMPORTANTE: Esto es texto plano. Para que no de "formato no compatible", 
+        # Daniel debe inyectar aquí el binario real de la imagen (.png).
+        contenido_binario = b"Resumen AI360 - Usuario: " + request.username.encode()
 
-        # 3. RESPUESTA PARA DESCARGA AUTOMÁTICA EN PC DEL CLIENTE
+        # 2. Intento de subida al Bucket
+        try:
+            client = storage.Client()
+            bucket = client.get_bucket(BUCKET_NAME) # Verificamos que el bucket existe
+            blob = bucket.blob(f"capturas/{nombre_archivo}")
+            
+            blob.upload_from_string(
+                contenido_binario,
+                content_type='image/png'
+            )
+        except Exception as bucket_err:
+            # Si falla el bucket, lanzamos error antes de intentar descargar nada
+            print(f"Error de Bucket: {str(bucket_err)}")
+            raise Exception(f"No se pudo guardar en Storage: {str(bucket_err)}")
+
+        # 3. Respuesta de éxito para descarga
         return Response(
             content=contenido_binario,
             media_type="image/png",
             headers={
-                "Content-Disposition": f"attachment; filename={nombre_archivo}",
-                "Access-Control-Expose-Headers": "Content-Disposition"
+                "Content-Disposition": f"attachment; filename={nombre_archivo}"
             }
         )
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error en bucket o captura: {str(e)}")
+        # Si algo falla, enviamos el error como texto para que no descargues un archivo "roto"
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/servicios/{username}", tags=["Servicios"])
 def obtener_servicios(username: str):
     servicios = usuario_service.obtener_servicios_usuario(username)
     return {"username": username, "servicios": servicios}
-
-@app.get("/servicios/{username}/{servicio}", tags=["Servicios"])
-def verificar_acceso_servicio(username: str, servicio: str):
-    tiene_acceso = usuario_service.validar_acceso_servicio(username, servicio)
-    if not tiene_acceso:
-        raise HTTPException(status_code=403, detail="Acceso denegado")
-    return {"username": username, "servicio": servicio, "acceso": True}
-
-@app.put("/modificar_usuario", tags=["Admin"])
-def modificar_usuario(request: ModificarUsuarioRequest):
-    try:
-        usuario_service.modificar_usuario(request.admin_user, request.admin_password, request.username, request.updates)
-        return {"message": "Usuario modificado exitosamente"}
-    except (PermissionError, ValueError) as e:
-        raise HTTPException(status_code=403, detail=str(e))
-
-@app.delete("/baja_usuario", tags=["Admin"])
-def baja_usuario(admin_user: str, admin_password: str, username: str):
-    try:
-        usuario_service.baja_usuario(admin_user, admin_password, username)
-        return {"message": "Usuario eliminado exitosamente"}
-    except (PermissionError, ValueError) as e:
-        raise HTTPException(status_code=403, detail=str(e))
 
 @app.get("/listar_usuarios", tags=["Admin"])
 def listar_usuarios(admin_user: str, admin_password: str):
@@ -135,6 +122,7 @@ def listar_usuarios(admin_user: str, admin_password: str):
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
 
+# El bloque main debe ir al final y bien indentado
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     uvicorn.run(app, host="0.0.0.0", port=port)
