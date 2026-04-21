@@ -14,14 +14,14 @@ from services.usuario_service import UsuarioService
 
 app = FastAPI(title="AI360 Backend", description="Backend para plataforma AI360")
 
-# CONFIGURACIÓN DE CORS REFORZADA
+# CONFIGURACIÓN DE CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Content-Disposition"] # Vital para que el navegador vea el nombre del archivo
+    expose_headers=["Content-Disposition"]
 )
 
 usuario_service = UsuarioService()
@@ -42,77 +42,53 @@ class AltaUsuarioRequest(BaseModel):
 class ModificarUsuarioRequest(BaseModel):
     admin_user: str
     admin_password: str
-    username: str
-    updates: dict
+    username: str  # El usuario a modificar
+    updates: dict  # Ejemplo: {"role": "admin"}
+
+class BajaUsuarioRequest(BaseModel):
+    admin_user: str
+    admin_password: str
+    target_user: str
 
 class CaptureRequest(BaseModel):
     username: str
     dashboard_type: str
     dashboard_url: str
 
-# --- ENDPOINTS ---
+# --- ENDPOINTS DE GESTIÓN (CORREGIDOS) ---
 
-@app.post("/login", tags=["Usuarios"])
-def login(request: LoginRequest):
-    valido, rol = usuario_service.verificar_usuario(request.username, request.password)
-    if not valido:
-        raise HTTPException(status_code=401, detail="Credenciales inválidas")
-    return {"message": "Login exitoso", "rol": rol}
-
-@app.post("/alta_usuario", tags=["Usuarios"])
-def alta_usuario(request: AltaUsuarioRequest):
+@app.post("/modificar_usuario", tags=["Admin"])
+def modificar_usuario(request: ModificarUsuarioRequest):
     try:
-        password_plana = request.nuevo_usuario.password_hash
-        request.nuevo_usuario.password_hash = generar_hash_sha256(password_plana)
-        usuario_service.alta_usuario(request.nuevo_usuario)
-        return {"message": "Usuario creado exitosamente"}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-@app.post("/generar_captura", tags=["Capturas"])
-def generar_captura(request: CaptureRequest):
-    try:
-        # 1. Preparación de datos
-        time.sleep(1) # Simulación de tiempo de captura
-        nombre_archivo = f"cap_{request.username}_{int(time.time())}.png"
-        
-        # MODIFICACIÓN: Binario real de un PNG (un punto rojo) para asegurar compatibilidad de formato
-        contenido_binario = (
-            b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01'
-            b'\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\xff\xff'
-            b'\x3f\x00\x05\xfe\x02\xfe\x0dc\x44\xaf\x00\x00\x00\x00IEND\xaeB`\x82'
+        exito = usuario_service.modificar_usuario(
+            request.admin_user,
+            request.admin_password,
+            request.username,
+            request.updates
         )
-
-        # 2. Intento de subida al Bucket
-        try:
-            client = storage.Client()
-            bucket = client.get_bucket(BUCKET_NAME) # Verificamos que el bucket existe
-            blob = bucket.blob(f"capturas/{nombre_archivo}")
-            
-            blob.upload_from_string(
-                contenido_binario,
-                content_type='image/png'
-            )
-        except Exception as bucket_err:
-            print(f"Error de Bucket: {str(bucket_err)}")
-            raise Exception(f"No se pudo guardar en Storage: {str(bucket_err)}")
-
-        # 3. Respuesta de éxito para descarga
-        return Response(
-            content=contenido_binario,
-            media_type="image/png",
-            headers={
-                "Content-Disposition": f"attachment; filename={nombre_archivo}"
-            }
-        )
-
+        if exito:
+            return {"message": "Usuario actualizado correctamente"}
+        raise HTTPException(status_code=400, detail="No se pudo realizar la actualización")
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/servicios/{username}", tags=["Servicios"])
-def obtener_servicios(username: str):
-    servicios = usuario_service.obtener_servicios_usuario(username)
-    return {"username": username, "servicios": servicios}
+@app.post("/baja_usuario", tags=["Admin"])
+def baja_usuario(request: BajaUsuarioRequest):
+    try:
+        exito = usuario_service.baja_usuario(
+            request.admin_user,
+            request.admin_password,
+            request.target_user
+        )
+        if exito:
+            return {"message": f"Usuario {request.target_user} eliminado"}
+        raise HTTPException(status_code=400, detail="Error al eliminar usuario")
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/listar_usuarios", tags=["Admin"])
 def listar_usuarios(admin_user: str, admin_password: str):
@@ -121,6 +97,34 @@ def listar_usuarios(admin_user: str, admin_password: str):
         return {"usuarios": usuarios}
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
+
+# --- OTROS ENDPOINTS ---
+
+@app.post("/login", tags=["Usuarios"])
+def login(request: LoginRequest):
+    valido, rol = usuario_service.verificar_usuario(request.username, request.password)
+    if not valido:
+        raise HTTPException(status_code=401, detail="Credenciales inválidas")
+    return {"message": "Login exitoso", "rol": rol}
+
+@app.post("/generar_captura", tags=["Capturas"])
+def generar_captura(request: CaptureRequest):
+    try:
+        nombre_archivo = f"cap_{request.username}_{int(time.time())}.png"
+        contenido_binario = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\xff\xff\x3f\x00\x05\xfe\x02\xfe\x0dc\x44\xaf\x00\x00\x00\x00IEND\xaeB`\x82'
+        
+        client = storage.Client()
+        bucket = client.get_bucket(BUCKET_NAME)
+        blob = bucket.blob(f"capturas/{nombre_archivo}")
+        blob.upload_from_string(contenido_binario, content_type='image/png')
+
+        return Response(
+            content=contenido_binario,
+            media_type="image/png",
+            headers={"Content-Disposition": f"attachment; filename={nombre_archivo}"}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
