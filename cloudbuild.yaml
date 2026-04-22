@@ -22,11 +22,11 @@ steps:
     - '--platform=managed'
     - '--allow-unauthenticated'
     - '--port=8080'
-
-# Esto es lo que soluciona el error INVALID_ARGUMENT de la terminal
-substitutions:
-  _PROJECT_ID: "ai360-260519"
-  _SERVICE_NAME: "ai360-backend"
+    - '--service-account=1085838555720-compute@developer.gserviceaccount.com'
 
 options:
   logging: CLOUD_LOGGING_ONLY
+
+substitutions:
+  _PROJECT_ID: "ai360-260519"
+  _SERVICE_NAME: "ai360-backend"
