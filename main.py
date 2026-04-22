@@ -156,7 +156,9 @@ async def generar_captura_endpoint(data: dict = Body(...)):
     dashboard_type = data.get("dashboard_type", "reporte")
     return generar_captura(username, dashboard_type)
 
+# Bloque corregido para Cloud Run
 if __name__ == "__main__":
     import uvicorn
+    # Se añade la importación de os para leer el entorno
     port = int(os.environ.get("PORT", 8080))
     uvicorn.run(app, host="0.0.0.0", port=port)
