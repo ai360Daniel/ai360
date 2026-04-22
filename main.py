@@ -1,160 +1,126 @@
-import os
-import uvicorn
-import hashlib
-import time
-from fastapi import FastAPI, HTTPException, Response
-from pydantic import BaseModel
-from typing import List, Optional
+from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from google.cloud import storage
+import bcrypt
+from PIL import Image
+import io
+import os
 
-# Importaciones de tus archivos locales (Asegúrate que existan)
-from models.usuario import Usuario
-from services.usuario_service import UsuarioService
+class UsuarioService:
+    def __init__(self):
+        self.usuarios = []  # En producción, usar una base de datos
 
-app = FastAPI(title="AI360 Backend Gold", description="Gestión completa de Usuarios y Dashboards")
+    def crear_usuario(self, data):
+        if any(u['username'] == data['username'] for u in self.usuarios):
+            raise HTTPException(status_code=400, detail="Usuario ya existe")
+        
+        # Asumir que password_hash ya está hasheado por el frontend
+        usuario = {
+            "username": data["username"],
+            "password_hash": data["password_hash"],
+            "role": data["rol"],  # Mapear rol a role internamente
+            "correo": data["correo"],
+            "telefono": data["telefono"],
+            "empresa": data["empresa"],
+            "puesto": data["puesto"],
+            "suscripcion": data["suscripcion"],
+            "servicios": data["servicios"],
+            "accesos": data["accesos"]
+        }
+        self.usuarios.append(usuario)
+        return {"message": "Usuario creado"}
 
-# CONFIGURACIÓN DE CORS REFORZADA PARA FRONTEND
+    def login(self, username, password):
+        user = next((u for u in self.usuarios if u['username'] == username), None)
+        if not user or not bcrypt.checkpw(password.encode('utf-8'), user['password_hash'].encode('utf-8')):
+            raise HTTPException(status_code=401, detail="Credenciales incorrectas")
+        return {"message": "Login exitoso", "rol": user['role']}
+
+    def listar_usuarios(self, admin_user, admin_password):
+        admin = next((u for u in self.usuarios if u['username'] == admin_user), None)
+        if not admin or admin['role'] != 'admin' or not bcrypt.checkpw(admin_password.encode('utf-8'), admin['password_hash'].encode('utf-8')):
+            raise HTTPException(status_code=403, detail="No autorizado")
+        return {"usuarios": [{"username": u["username"], "role": u["role"]} for u in self.usuarios]}
+
+    def modificar_usuario(self, admin_user, admin_password, username, updates):
+        admin = next((u for u in self.usuarios if u['username'] == admin_user), None)
+        if not admin or admin['role'] != 'admin' or not bcrypt.checkpw(admin_password.encode('utf-8'), admin['password_hash'].encode('utf-8')):
+            raise HTTPException(status_code=403, detail="No autorizado")
+        user = next((u for u in self.usuarios if u['username'] == username), None)
+        if not user:
+            raise HTTPException(status_code=400, detail="Usuario no encontrado")
+        user['role'] = updates['role']
+        return {"message": "Cambios guardados correctamente"}
+
+    def baja_usuario(self, admin_user, admin_password, target_user):
+        admin = next((u for u in self.usuarios if u['username'] == admin_user), None)
+        if not admin or admin['role'] != 'admin' or not bcrypt.checkpw(admin_password.encode('utf-8'), admin['password_hash'].encode('utf-8')):
+            raise HTTPException(status_code=403, detail="No autorizado")
+        user = next((u for u in self.usuarios if u['username'] == target_user), None)
+        if not user:
+            raise HTTPException(status_code=400, detail="Usuario no encontrado")
+        self.usuarios.remove(user)
+        return {"message": f"Usuario {target_user} eliminado correctamente"}
+
+def generar_captura():
+    # Crear un PNG dummy
+    img = Image.new('RGB', (100, 100), color='red')
+    buf = io.BytesIO()
+    img.save(buf, format='PNG')
+    buf.seek(0)
+    
+    # Subir a Google Cloud Storage
+    try:
+        client = storage.Client()
+        bucket = client.bucket("usuarios_plataforma_ai360")
+        blob = bucket.blob("capturas/captura.png")
+        blob.upload_from_file(buf, content_type='image/png')
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error subiendo a GCS: {str(e)}")
+    
+    # Devolver como descarga
+    response = Response(content=buf.getvalue(), media_type='image/png')
+    response.headers["Content-Disposition"] = "attachment; filename=captura.png"
+    return response
+
+app = FastAPI()
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Content-Disposition"]
+    expose_headers=["Content-Disposition"],
 )
 
 usuario_service = UsuarioService()
-BUCKET_NAME = "usuarios_plataforma_ai360"
 
-# --- MODELOS DE DATOS (Sincronizados con App.tsx y Dashboard.tsx) ---
+@app.post("/alta_usuario")
+def alta_usuario(data: dict):
+    return usuario_service.crear_usuario(data['nuevo_usuario'])
 
-class LoginRequest(BaseModel):
-    username: str
-    password: str
+@app.post("/login")
+def login(data: dict):
+    return usuario_service.login(data['username'], data['password'])
 
-class AltaUsuarioRequest(BaseModel):
-    # Esto coincide con el { nuevo_usuario: {...} } de tu App.tsx
-    nuevo_usuario: Usuario
+@app.get("/listar_usuarios")
+def listar_usuarios(admin_user: str = Query(...), admin_password: str = Query(...)):
+    return usuario_service.listar_usuarios(admin_user, admin_password)
 
-class ModificarUsuarioRequest(BaseModel):
-    admin_user: str
-    admin_password: str
-    username: str  # Usuario objetivo
-    updates: dict
+@app.post("/modificar_usuario")
+def modificar_usuario(data: dict):
+    return usuario_service.modificar_usuario(data['admin_user'], data['admin_password'], data['username'], data['updates'])
 
-class BajaUsuarioRequest(BaseModel):
-    admin_user: str
-    admin_password: str
-    target_user: str # Coincide con tu Dashboard.tsx
+@app.post("/baja_usuario")
+def baja_usuario(data: dict):
+    return usuario_service.baja_usuario(data['admin_user'], data['admin_password'], data['target_user'])
 
-class CaptureRequest(BaseModel):
-    username: str
-    dashboard_type: str
-    dashboard_url: str
-
-# --- ENDPOINTS DE ADMINISTRACIÓN Y FLUJO ---
-
-@app.post("/alta_usuario", tags=["Admin"])
-def alta_usuario(request: AltaUsuarioRequest):
-    """Crea un nuevo usuario en el sistema."""
-    try:
-        # El objeto 'Usuario' ya viene validado por Pydantic
-        exito = usuario_service.alta_usuario(request.nuevo_usuario)
-        if exito:
-            return {"message": f"Usuario {request.nuevo_usuario.username} registrado con éxito"}
-        raise HTTPException(status_code=400, detail="El usuario ya existe o los datos son inválidos")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/login", tags=["Usuarios"])
-def login(request: LoginRequest):
-    """Verifica credenciales y devuelve el rol."""
-    valido, rol = usuario_service.verificar_usuario(request.username, request.password)
-    if not valido:
-        raise HTTPException(status_code=401, detail="Credenciales incorrectas")
-    return {"message": "Login exitoso", "rol": rol}
-
-@app.get("/listar_usuarios", tags=["Admin"])
-def listar_usuarios(admin_user: str, admin_password: str):
-    """Lista todos los usuarios (Solo para admins)."""
-    try:
-        usuarios = usuario_service.listar_usuarios(admin_user, admin_password)
-        return {"usuarios": usuarios}
-    except PermissionError as e:
-        raise HTTPException(status_code=403, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/modificar_usuario", tags=["Admin"])
-def modificar_usuario(request: ModificarUsuarioRequest):
-    """Actualiza datos (como el rol) de un usuario existente."""
-    try:
-        exito = usuario_service.modificar_usuario(
-            request.admin_user,
-            request.admin_password,
-            request.username,
-            request.updates
-        )
-        if exito:
-            return {"message": "Cambios guardados correctamente"}
-        raise HTTPException(status_code=400, detail="No se pudo actualizar el usuario")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/baja_usuario", tags=["Admin"])
-def baja_usuario(request: BajaUsuarioRequest):
-    """Elimina un usuario del sistema."""
-    try:
-        exito = usuario_service.baja_usuario(
-            request.admin_user,
-            request.admin_password,
-            request.target_user
-        )
-        if exito:
-            return {"message": f"Usuario {request.target_user} eliminado de la base de datos"}
-        raise HTTPException(status_code=400, detail="Error al procesar la baja")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# --- ENDPOINT DE CAPTURA (PNG/PDF) ---
-
-@app.post("/generar_captura", tags=["Capturas"])
-def generar_captura(request: CaptureRequest):
-    """Simula o genera una captura del dashboard y la sube al Bucket."""
-    try:
-        # Generar nombre único para el archivo
-        nombre_archivo = f"cap_{request.username}_{int(time.time())}.png"
-        
-        # Contenido binario de una imagen PNG mínima (1x1 transparente) 
-        # Aquí es donde en el futuro integrarías Playwright o Selenium
-        contenido_binario = (
-            b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01'
-            b'\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\xff\xff'
-            b'\x3f\x00\x05\xfe\x02\xfe\x0dc\x44\xaf\x00\x00\x00\x00IEND\xaeB`\x82'
-        )
-
-        # Subida a Google Cloud Storage
-        client = storage.Client()
-        bucket = client.get_bucket(BUCKET_NAME)
-        blob = bucket.blob(f"capturas/{nombre_archivo}")
-        blob.upload_from_string(contenido_binario, content_type='image/png')
-
-        # Responder con el archivo para descarga inmediata en el navegador
-        return Response(
-            content=contenido_binario,
-            media_type="image/png",
-            headers={
-                "Content-Disposition": f"attachment; filename={nombre_archivo}",
-                "Access-Control-Expose-Headers": "Content-Disposition"
-            }
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error en Storage: {str(e)}")
-
-# --- INICIO DEL SERVIDOR ---
+@app.post("/generar_captura")
+def generar_captura_endpoint():
+    return generar_captura()
 
 if __name__ == "__main__":
-    # Cloud Run usa la variable de entorno PORT
-    port = int(os.environ.get("PORT", 8080))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
