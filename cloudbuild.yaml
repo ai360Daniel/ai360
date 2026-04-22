@@ -3,21 +3,21 @@ steps:
   args:
     - 'build'
     - '-t'
-    - 'us-central1-docker.pkg.dev/ai360-260519/apipy/backend:latest'
+    - 'us-central1-docker.pkg.dev/ai360-260519/ai360/backend:latest'
     - '.'
 
 - name: 'gcr.io/cloud-builders/docker'
   args:
     - 'push'
-    - 'us-central1-docker.pkg.dev/ai360-260519/apipy/backend:latest'
+    - 'us-central1-docker.pkg.dev/ai360-260519/ai360/backend:latest'
 
 - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
   entrypoint: gcloud
   args:
     - 'run'
     - 'deploy'
-    - 'apipy'
-    - '--image=us-central1-docker.pkg.dev/ai360-260519/apipy/backend:latest'
+    - 'ai360-backend'
+    - '--image=us-central1-docker.pkg.dev/ai360-260519/ai360/backend:latest'
     - '--region=us-central1'
     - '--platform=managed'
     - '--allow-unauthenticated'
