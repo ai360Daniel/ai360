@@ -1,52 +1,34 @@
 # ============================================================
-# � DOCKERFILE OPTIMIZADO PARA GOOGLE CLOUD RUN
+# 🐳 DOCKERFILE CORREGIDO PARA GOOGLE CLOUD RUN
 # ============================================================
-# Imagen base: Python 3.10 slim (optimizada para producción)
+
 FROM python:3.10-slim
 
-# ============================================================
-# VARIABLES DE ENTORNO
-# ============================================================
+# Variables de entorno
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PORT=8080
 
-# ============================================================
-# DIRECTORIOS DE TRABAJO
-# ============================================================
+# Directorio de trabajo
 WORKDIR /app
 
-# ============================================================
-# INSTALAR DEPENDENCIAS DEL SISTEMA
-# ============================================================
+# Dependencias del sistema
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
-# ============================================================
-# COPIAR Y INSTALAR DEPENDENCIAS DE PYTHON
-# ============================================================
+# Instalar dependencias Python
 COPY requirements.txt .
 RUN pip install --upgrade pip setuptools wheel && \
     pip install -r requirements.txt
 
-# ============================================================
-# COPIAR CÓDIGO DE LA APLICACIÓN
-# ============================================================
+# Copiar código
 COPY . .
 
-# ============================================================
-# EXPONER PUERTO (Cloud Run usa PORT)
-# ============================================================
-EXPOSE ${PORT:-8000}
+# Exponer puerto correcto para Cloud Run
+EXPOSE 8080
 
-# ============================================================
-# COMANDO DE INICIO PARA PRODUCCIÓN
-# ============================================================
-CMD exec uvicorn main:app \
-    --host 0.0.0.0 \
-    --port ${PORT:-8000} \
-    --workers 4 \
-    --timeout-keep-alive 5 \
-    --access-log
+# 🚀 Comando de arranque (CORREGIDO)
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
