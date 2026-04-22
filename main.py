@@ -123,4 +123,5 @@ def generar_captura_endpoint():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    port = int(os.environ.get("PORT", 8080))  # 🔥 FIX PARA CLOUD RUN
+    uvicorn.run(app, host="0.0.0.0", port=port)
