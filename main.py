@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Query, Response
+from fastapi import FastAPI, HTTPException, Query, Response, Body
 from fastapi.middleware.cors import CORSMiddleware
 from google.cloud import storage
 import bcrypt
@@ -6,106 +6,12 @@ from PIL import Image
 import io
 import os
 
+# Configuración
 BUCKET_NAME = "usuarios_plataforma_ai360"
 
-class UsuarioService:
-    def __init__(self):
-        self.usuarios = []
+app = FastAPI(title="AI360 Backend Senior")
 
-    def crear_usuario(self, data):
-        if any(u['username'] == data['username'] for u in self.usuarios):
-            raise HTTPException(status_code=400, detail="Usuario ya existe")
-
-        # 🔥 HASH REAL (antes no existía)
-        password_hash = bcrypt.hashpw(
-            data["password_hash"].encode('utf-8'),
-            bcrypt.gensalt()
-        ).decode('utf-8')
-
-        usuario = {
-            "username": data["username"],
-            "password_hash": password_hash,
-            "role": data["rol"],
-            "correo": data["correo"],
-            "telefono": data["telefono"],
-            "empresa": data["empresa"],
-            "puesto": data["puesto"],
-            "suscripcion": data["suscripcion"],
-            "servicios": data["servicios"],
-            "accesos": data["accesos"]
-        }
-
-        self.usuarios.append(usuario)
-        return {"message": "Usuario creado"}
-
-    def login(self, username, password):
-        user = next((u for u in self.usuarios if u['username'] == username), None)
-        if not user:
-            raise HTTPException(status_code=401, detail="Credenciales incorrectas")
-
-        if not bcrypt.checkpw(password.encode('utf-8'), user['password_hash'].encode('utf-8')):
-            raise HTTPException(status_code=401, detail="Credenciales incorrectas")
-
-        return {"message": "Login exitoso", "rol": user['role']}
-
-    def listar_usuarios(self, admin_user, admin_password):
-        admin = next((u for u in self.usuarios if u['username'] == admin_user), None)
-        if not admin or admin['role'] != 'admin':
-            raise HTTPException(status_code=403, detail="No autorizado")
-
-        if not bcrypt.checkpw(admin_password.encode('utf-8'), admin['password_hash'].encode('utf-8')):
-            raise HTTPException(status_code=403, detail="No autorizado")
-
-        return {"usuarios": [{"username": u["username"], "role": u["role"]} for u in self.usuarios]}
-
-    def modificar_usuario(self, admin_user, admin_password, username, updates):
-        admin = next((u for u in self.usuarios if u['username'] == admin_user), None)
-        if not admin or admin['role'] != 'admin':
-            raise HTTPException(status_code=403, detail="No autorizado")
-
-        user = next((u for u in self.usuarios if u['username'] == username), None)
-        if not user:
-            raise HTTPException(status_code=400, detail="Usuario no encontrado")
-
-        user['role'] = updates['role']
-        return {"message": "Cambios guardados correctamente"}
-
-    def baja_usuario(self, admin_user, admin_password, target_user):
-        admin = next((u for u in self.usuarios if u['username'] == admin_user), None)
-        if not admin or admin['role'] != 'admin':
-            raise HTTPException(status_code=403, detail="No autorizado")
-
-        user = next((u for u in self.usuarios if u['username'] == target_user), None)
-        if not user:
-            raise HTTPException(status_code=400, detail="Usuario no encontrado")
-
-        self.usuarios.remove(user)
-        return {"message": f"Usuario {target_user} eliminado correctamente"}
-
-
-def generar_captura():
-    img = Image.new('RGB', (100, 100), color='red')
-    buf = io.BytesIO()
-    img.save(buf, format='PNG')
-    buf.seek(0)
-
-    try:
-        client = storage.Client()
-        bucket = client.bucket(BUCKET_NAME)
-        blob = bucket.blob("capturas/captura.png")
-        blob.upload_from_file(buf, content_type='image/png')
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error GCS: {str(e)}")
-
-    return Response(
-        content=buf.getvalue(),
-        media_type='image/png',
-        headers={"Content-Disposition": "attachment; filename=captura.png"}
-    )
-
-
-app = FastAPI()
-
+# --- CONFIGURACIÓN DE CORS (Para que React no falle) ---
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -115,33 +21,102 @@ app.add_middleware(
     expose_headers=["Content-Disposition"],
 )
 
-usuario_service = UsuarioService()
+# --- BASE DE DATOS VOLÁTIL (NOTA: En Senior se usaría Firestore/Cloud SQL) ---
+# Por ahora mantendremos la lista, pero agregaremos un usuario ADMIN por defecto 
+# para que nunca te quedes fuera al desplegar.
+class DB:
+    usuarios = [
+        {
+            "username": "admin",
+            "password_hash": bcrypt.hashpw("admin123".encode('utf-8'), bcrypt.gensalt()).decode('utf-8'),
+            "role": "admin"
+        }
+    ]
 
+db = DB()
 
+# --- SERVICIOS DE USUARIO ---
 @app.post("/alta_usuario")
-def alta_usuario(data: dict):
-    return usuario_service.crear_usuario(data['nuevo_usuario'])
+async def alta_usuario(payload: dict = Body(...)):
+    data = payload.get("nuevo_usuario")
+    if not data:
+        raise HTTPException(status_code=400, detail="Faltan datos del usuario")
+    
+    if any(u['username'] == data['username'] for u in db.usuarios):
+        raise HTTPException(status_code=400, detail="El nombre de usuario ya existe")
+
+    password_hash = bcrypt.hashpw(
+        data["password_hash"].encode('utf-8'),
+        bcrypt.gensalt()
+    ).decode('utf-8')
+
+    nuevo_usuario = {
+        "username": data["username"],
+        "password_hash": password_hash,
+        "role": data.get("rol", "usuario_estandar"), # Estandarizado con tu Front
+        "correo": data.get("correo", ""),
+        "empresa": data.get("empresa", ""),
+        "puesto": data.get("puesto", "")
+    }
+
+    db.usuarios.append(nuevo_usuario)
+    return {"message": "Usuario creado con éxito", "username": data["username"]}
 
 @app.post("/login")
-def login(data: dict):
-    return usuario_service.login(data['username'], data['password'])
+async def login(data: dict = Body(...)):
+    username = data.get("username")
+    password = data.get("password")
+    
+    user = next((u for u in db.usuarios if u['username'] == username), None)
+    
+    if not user or not bcrypt.checkpw(password.encode('utf-8'), user['password_hash'].encode('utf-8')):
+        raise HTTPException(status_code=401, detail="Usuario o contraseña incorrectos")
 
+    # Devolvemos 'role' para que tu Front lo lea correctamente
+    return {
+        "message": "Bienvenido",
+        "username": user["username"],
+        "role": user.get("role", "usuario_estandar")
+    }
+
+# --- GESTIÓN DE EQUIPO (ADMIN ONLY) ---
 @app.get("/listar_usuarios")
-def listar_usuarios(admin_user: str = Query(...), admin_password: str = Query(...)):
-    return usuario_service.listar_usuarios(admin_user, admin_password)
+async def listar_usuarios(admin_user: str = Query(...), admin_password: str = Query(...)):
+    admin = next((u for u in db.usuarios if u['username'] == admin_user), None)
+    if not admin or admin['role'] != 'admin' or not bcrypt.checkpw(admin_password.encode('utf-8'), admin['password_hash'].encode('utf-8')):
+        raise HTTPException(status_code=403, detail="Acceso denegado: Se requieren permisos de administrador")
 
-@app.post("/modificar_usuario")
-def modificar_usuario(data: dict):
-    return usuario_service.modificar_usuario(data['admin_user'], data['admin_password'], data['username'], data['updates'])
+    return {"usuarios": [{"username": u["username"], "role": u["role"]} for u in db.usuarios]}
 
-@app.post("/baja_usuario")
-def baja_usuario(data: dict):
-    return usuario_service.baja_usuario(data['admin_user'], data['admin_password'], data['target_user'])
-
+# --- EL ENDPOINT DE CAPTURAS/PDF (RESCATADO) ---
 @app.post("/generar_captura")
-def generar_captura_endpoint():
-    return generar_captura()
+async def generar_captura(data: dict = Body(...)):
+    # Aquí es donde va tu lógica de captura de pantalla o generación de PDF
+    # Por ahora, aseguramos la conexión con el Bucket que mencionaste
+    try:
+        username = data.get("username", "anonimo")
+        tipo = data.get("dashboard_type", "reporte")
+        
+        # Simulamos la creación de un reporte (aquí iría tu código de FPDF)
+        img = Image.new('RGB', (800, 600), color=(0, 31, 63)) # Azul AI360
+        buf = io.BytesIO()
+        img.save(buf, format='PNG')
+        img_bytes = buf.getvalue()
 
+        # SUBIDA A TU BUCKET REAL
+        client = storage.Client()
+        bucket = client.bucket(BUCKET_NAME)
+        blob = bucket.blob(f"capturas/{username}_{tipo}.png")
+        blob.upload_from_string(img_bytes, content_type='image/png')
+
+        return Response(
+            content=img_bytes,
+            media_type='image/png',
+            headers={"Content-Disposition": f"attachment; filename=reporte_{tipo}.png"}
+        )
+    except Exception as e:
+        print(f"Error en GCS: {e}")
+        raise HTTPException(status_code=500, detail="Error al guardar en Cloud Storage")
 
 if __name__ == "__main__":
     import uvicorn
